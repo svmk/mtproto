@@ -68,3 +68,16 @@ func (m *MTProto) AuthLogOut() (bool, error) {
 
 	return result, err
 }
+
+func (m *MTProto) AuthBot(token string) (*TL_auth_authorization, error) {
+	tl, err := m.InvokeSync(TL_auth_importBotAuthorization{
+		Api_id:          m.id,
+		Api_hash:        m.hash,
+		Bot_auth_token:  token,
+	})
+	if err != nil {
+		return nil, err
+	}
+	result := (*tl).(TL_auth_authorization)
+	return &result, nil
+}
