@@ -3,9 +3,6 @@ package mtproto
 import (
 	"errors"
 	"fmt"
-	"github.com/tevino/abool"
-	"io"
-	"log"
 	"os"
 	"runtime"
 	"sync"
@@ -13,8 +10,9 @@ import (
 )
 
 type MTProto struct {
+	objId time.Time
 	queueSend    chan packetToSend
-	isConnected  *abool.AtomicBool
+	networkError syncError
 	stopRoutines chan struct{}
 	allDone      sync.WaitGroup
 
@@ -31,6 +29,36 @@ type MTProto struct {
 
 	dclist        map[int32]string
 	configuration options
+}
+
+type syncError struct {
+	error error
+	sync sync.Mutex
+}
+
+func (e *syncError) clear() {
+	e.set(nil)
+}
+
+func (e *syncError) set(err error) {
+	e.sync.Lock()
+	e.error = err
+	e.sync.Unlock()
+}
+
+func (e *syncError) setIfEmpty(err error) {
+	e.sync.Lock()
+	if e.error == nil {
+		e.error = err
+	}
+	e.sync.Unlock()
+}
+
+func (e *syncError) get() error {
+	e.sync.Lock()
+	err := e.error
+	e.sync.Unlock()
+	return err
 }
 
 type packetToSend struct {
@@ -150,9 +178,8 @@ func NewMTProto(id int32, hash string, opts ...Option) (*MTProto, error) {
 	}
 
 	m := new(MTProto)
-
+	m.objId = time.Now()
 	m.queueSend = make(chan packetToSend, 64)
-	m.isConnected = abool.NewBool(true)
 	m.stopRoutines = make(chan struct{})
 	m.allDone = sync.WaitGroup{}
 
@@ -178,6 +205,7 @@ func (m *MTProto) Connect() (err error) {
 	if err != nil {
 		return
 	}
+	m.networkError.clear()
 
 	// start goroutines
 	go m.sendRoutine()
@@ -269,7 +297,7 @@ func (m *MTProto) sendRoutine() {
 	for {
 		select {
 		case <-m.stopRoutines:
-			m.isConnected.SetTo(false)
+			m.networkError.setIfEmpty(errors.New("Unable to send message: disconnected "))
 			return
 		case x := <-m.queueSend:
 			err := m.network.Send(x.msg, x.resp)
@@ -288,16 +316,9 @@ func (m *MTProto) readRoutine() {
 		ch := make(chan interface{}, 1)
 		go func(ch chan<- interface{}) {
 			data, err := m.network.Read()
-			if err == io.EOF {
-				// TODO: Last message to the server was lost. Fix it.
-				// Connection closed by server, trying to reconnect
-				err = m.reconnect(m.network.Address())
-				if err != nil {
-					log.Fatalln("ReadRoutine: ", err)
-				}
-			}
 			if err != nil {
-				log.Fatalln("ReadRoutine: ", err)
+				m.networkError.set(err)
+				return
 			}
 			ch <- data
 		}(ch)
@@ -353,9 +374,9 @@ func (m *MTProto) InvokeSync(msg TL) (*TL, error) {
 
 func (m *MTProto) InvokeAsync(msg TL) chan response {
 	resp := make(chan response, 1)
-	if !m.isConnected.IsSet() {
+	if err := m.networkError.get(); err != nil {
 		go func() {
-			resp <- response{err: errors.New("Disconnected ")}
+			resp <- response{err: err}
 		}()
 		return resp
 	}
