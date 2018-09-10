@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"os"
 	"fmt"
 	"net"
+	"os"
 	"sync"
 	"time"
 )
@@ -29,7 +29,8 @@ type Network struct {
 	useIPv6 bool
 	address string
 
-	conn *net.TCPConn
+	conn   net.Conn
+	dialer Dialer
 
 	mutex        *sync.Mutex
 	msgsIdToAck  map[int64]packetToSend
@@ -41,7 +42,7 @@ type Network struct {
 	msgId     int64
 }
 
-func NewNetwork(newSession bool, authkeyfile string, queueSend chan packetToSend, address string, useIPv6 bool) (INetwork, error) {
+func NewNetwork(dialer Dialer, newSession bool, authkeyfile string, queueSend chan packetToSend, address string, useIPv6 bool) (INetwork, error) {
 	nw := new(Network)
 
 	nw.queueSend = queueSend
@@ -51,6 +52,7 @@ func NewNetwork(newSession bool, authkeyfile string, queueSend chan packetToSend
 
 	nw.useIPv6 = useIPv6
 	nw.address = address
+	nw.dialer = dialer
 
 	var err error
 	if newSession {
@@ -98,16 +100,13 @@ func (nw *Network) LoadSession(session string) error {
 	return nil
 }
 
+func (nw *Network) SetDialer(dialer Dialer) {
+	nw.dialer = dialer
+}
+
 func (nw *Network) Connect() error {
 	var err error
-	var tcpAddr *net.TCPAddr
-
-	// connect
-	tcpAddr, err = net.ResolveTCPAddr("tcp", nw.session.GetAddress())
-	if err != nil {
-		return err
-	}
-	nw.conn, err = net.DialTCP("tcp", nil, tcpAddr)
+	nw.conn, err = nw.dialer.Dial(nw.session.GetAddress())
 	if err != nil {
 		return err
 	}

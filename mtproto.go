@@ -26,7 +26,8 @@ type MTProto struct {
 	system      string
 	language    string
 
-	dclist map[int32]string
+	dclist        map[int32]string
+	configuration options
 }
 
 type packetToSend struct {
@@ -50,6 +51,7 @@ type options struct {
 	AuthkeyFile   string
 	ServerAddress string
 	NewSession    bool
+	Dialer        Dialer
 }
 
 func WithVersion(version string) Option {
@@ -90,6 +92,12 @@ func WithAuthFile(authfile string, newSession bool) Option {
 	}
 }
 
+func WithDialer(dialer Dialer) Option {
+	return func(opts *options) {
+		opts.Dialer = dialer
+	}
+}
+
 var defaultOptions = options{
 	DeviceModel:   "Unknown",
 	SystemVersion: runtime.GOOS + "/" + runtime.GOARCH,
@@ -99,6 +107,7 @@ var defaultOptions = options{
 	ServerAddress: "149.154.167.50:443",
 	Version:       "0.0.1",
 	NewSession:    false,
+	Dialer:        DefaultDialer,
 }
 
 // API Errors
@@ -145,8 +154,9 @@ func NewMTProto(id int32, hash string, opts ...Option) (*MTProto, error) {
 	m.language = configuration.Language
 	m.authkeyfile = configuration.AuthkeyFile
 	m.IPv6 = configuration.IPv6
+	m.configuration = configuration
 
-	if m.network, err = NewNetwork(configuration.NewSession, m.authkeyfile, m.queueSend, configuration.ServerAddress, m.IPv6); err != nil {
+	if m.network, err = NewNetwork(configuration.Dialer, configuration.NewSession, m.authkeyfile, m.queueSend, configuration.ServerAddress, m.IPv6); err != nil {
 		return nil, err
 	}
 
@@ -222,7 +232,7 @@ func (m *MTProto) reconnect(newaddr string) error {
 
 	// renew connection
 	if newaddr != m.network.Address() {
-		m.network, err = NewNetwork(true, m.authkeyfile, m.queueSend, newaddr, m.IPv6)
+		m.network, err = NewNetwork(m.configuration.Dialer, true, m.authkeyfile, m.queueSend, newaddr, m.IPv6)
 	}
 
 	err = m.Connect()
