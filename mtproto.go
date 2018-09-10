@@ -10,55 +10,26 @@ import (
 )
 
 type MTProto struct {
-	objId time.Time
-	queueSend    chan packetToSend
-	networkError syncError
-	stopRoutines chan struct{}
-	allDone      sync.WaitGroup
+	updateListeners []UpdateListener
+	objId           time.Time
+	queueSend       chan packetToSend
+	networkError    syncError
+	stopRoutines    chan struct{}
+	allDone         sync.WaitGroup
 
 	network INetwork
 
-	IPv6        bool
+	IPv6           bool
 	sessionStorage SessionStorage
-	id          int32
-	hash        string
-	version     string
-	device      string
-	system      string
-	language    string
+	id             int32
+	hash           string
+	version        string
+	device         string
+	system         string
+	language       string
 
 	dclist        map[int32]string
 	configuration options
-}
-
-type syncError struct {
-	error error
-	sync sync.Mutex
-}
-
-func (e *syncError) clear() {
-	e.set(nil)
-}
-
-func (e *syncError) set(err error) {
-	e.sync.Lock()
-	e.error = err
-	e.sync.Unlock()
-}
-
-func (e *syncError) setIfEmpty(err error) {
-	e.sync.Lock()
-	if e.error == nil {
-		e.error = err
-	}
-	e.sync.Unlock()
-}
-
-func (e *syncError) get() error {
-	e.sync.Lock()
-	err := e.error
-	e.sync.Unlock()
-	return err
 }
 
 type packetToSend struct {
@@ -74,15 +45,15 @@ type response struct {
 type Option func(*options)
 
 type options struct {
-	Version       string
-	DeviceModel   string
-	SystemVersion string
-	Language      string
-	IPv6          bool
+	Version        string
+	DeviceModel    string
+	SystemVersion  string
+	Language       string
+	IPv6           bool
 	SessionStorage SessionStorage
-	ServerAddress string
-	NewSession    bool
-	Dialer        Dialer
+	ServerAddress  string
+	NewSession     bool
+	Dialer         Dialer
 }
 
 func WithVersion(version string) Option {
@@ -136,15 +107,15 @@ func WithDialer(dialer Dialer) Option {
 }
 
 var defaultOptions = options{
-	DeviceModel:   "Unknown",
-	SystemVersion: runtime.GOOS + "/" + runtime.GOARCH,
-	Language:      "en",
-	IPv6:          false,
+	DeviceModel:    "Unknown",
+	SystemVersion:  runtime.GOOS + "/" + runtime.GOARCH,
+	Language:       "en",
+	IPv6:           false,
 	SessionStorage: NewFileSessionStorage(os.Getenv("HOME") + "/mtproto.auth"),
-	ServerAddress: "149.154.167.50:443",
-	Version:       "0.0.1",
-	NewSession:    false,
-	Dialer:        DefaultDialer,
+	ServerAddress:  "149.154.167.50:443",
+	Version:        "0.0.1",
+	NewSession:     false,
+	Dialer:         DefaultDialer,
 }
 
 // API Errors
@@ -178,6 +149,7 @@ func NewMTProto(id int32, hash string, opts ...Option) (*MTProto, error) {
 	}
 
 	m := new(MTProto)
+	m.updateListeners = make([]UpdateListener, 0)
 	m.objId = time.Now()
 	m.queueSend = make(chan packetToSend, 64)
 	m.stopRoutines = make(chan struct{})
@@ -198,6 +170,20 @@ func NewMTProto(id int32, hash string, opts ...Option) (*MTProto, error) {
 	}
 
 	return m, nil
+}
+
+func (m *MTProto) RegisterUpdateListener(listener UpdateListener) {
+	m.updateListeners = append(m.updateListeners, listener)
+}
+
+func (m *MTProto) UnregisterUpdateListener(listener UpdateListener) {
+	filtered := m.updateListeners[0:]
+	for _, updateListener := range m.updateListeners {
+		if updateListener != listener {
+			filtered = append(filtered, listener)
+		}
+	}
+	m.updateListeners = filtered
 }
 
 func (m *MTProto) Connect() (err error) {
@@ -330,7 +316,19 @@ func (m *MTProto) readRoutine() {
 			if data == nil {
 				return
 			}
-			m.network.Process(data)
+			m.processIncomingData(data)
+		}
+	}
+}
+
+func (m *MTProto) processIncomingData(systemData interface{}) {
+	userData := m.network.Process(systemData)
+	if userData != nil {
+		switch userData := userData.(type) {
+		case TL_updates:
+			for _, updateListener := range m.updateListeners {
+				updateListener.Notify(userData)
+			}
 		}
 	}
 }

@@ -23,7 +23,7 @@ type INetwork interface {
 }
 
 type Network struct {
-	session ISession
+	session        ISession
 	sessionStorage SessionStorage
 
 	useIPv6 bool
@@ -471,16 +471,15 @@ func (nw *Network) Process(data interface{}) interface{} {
 }
 
 func (nw *Network) process(msgId int64, seqNo int32, data interface{}) interface{} {
-	switch data.(type) {
+	switch message := data.(type) {
 	case TL_msg_container:
-		data := data.(TL_msg_container).Items
+		data := message.Items
 		for _, v := range data {
 			nw.process(v.Msg_id, v.Seq_no, v.Data)
 		}
 
 	case TL_bad_server_salt:
-		data := data.(TL_bad_server_salt)
-		nw.session.SetServerSalt(data.New_server_salt)
+		nw.session.SetServerSalt(message.New_server_salt)
 		_ = nw.sessionStorage.Save(nw.session)
 		nw.mutex.Lock()
 		defer nw.mutex.Unlock()
@@ -490,31 +489,27 @@ func (nw *Network) process(msgId int64, seqNo int32, data interface{}) interface
 		}
 
 	case TL_new_session_created:
-		data := data.(TL_new_session_created)
-		nw.session.SetServerSalt(data.Server_salt)
+		nw.session.SetServerSalt(message.Server_salt)
 		_ = nw.sessionStorage.Save(nw.session)
 
 	case TL_ping:
-		data := data.(TL_ping)
-		nw.queueSend <- packetToSend{TL_pong{msgId, data.Ping_id}, nil}
+		nw.queueSend <- packetToSend{TL_pong{msgId, message.Ping_id}, nil}
 
 	case TL_pong:
 		// ignore
 
 	case TL_msgs_ack:
-		data := data.(TL_msgs_ack)
 		nw.mutex.Lock()
 		defer nw.mutex.Unlock()
-		for _, v := range data.MsgIds {
+		for _, v := range message.MsgIds {
 			delete(nw.msgsIdToAck, v)
 		}
 
 	case TL_rpc_result:
-		data := data.(TL_rpc_result)
-		x := nw.process(msgId, seqNo, data.Obj)
+		x := nw.process(msgId, seqNo, message.Obj)
 		nw.mutex.Lock()
 		defer nw.mutex.Unlock()
-		if v, ok := nw.msgsIdToResp[data.Req_msg_id]; ok {
+		if v, ok := nw.msgsIdToResp[message.Req_msg_id]; ok {
 			var resp response
 			if rpcError, ok := x.(TL_rpc_error); ok {
 				resp.err = rpcError
@@ -524,9 +519,9 @@ func (nw *Network) process(msgId int64, seqNo int32, data interface{}) interface
 
 			close(v)
 		}
-		delete(nw.msgsIdToAck, data.Req_msg_id)
+		delete(nw.msgsIdToAck, message.Req_msg_id)
 	default:
-		return data
+		return message
 	}
 
 	// TODO: Check why I should do this

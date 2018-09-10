@@ -95,7 +95,6 @@ func (s FileSessionStorage) Save(session ISession) error {
 }
 
 type dummySessionStorage struct {
-
 }
 
 func NewDummySessionStorage() SessionStorage {
