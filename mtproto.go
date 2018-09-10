@@ -321,7 +321,10 @@ func (m *MTProto) InvokeSync(msg TL) (*TL, error) {
 				if n != 1 {
 					n, _ := fmt.Sscanf(err.Error_message, "NETWORK_MIGRATE_%d", &newDc)
 					if n != 1 {
-						return nil, fmt.Errorf("RPC error_string: %s", err.Error_message)
+						n, _ := fmt.Sscanf(err.Error_message, "USER_MIGRATE_%d", &newDc)
+						if n != 1 {
+							return nil, fmt.Errorf("RPC error_string: %s", err.Error_message)
+						}
 					}
 				}
 				newDcAddr, ok := m.dclist[newDc]
