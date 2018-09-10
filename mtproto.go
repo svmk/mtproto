@@ -154,7 +154,10 @@ func NewMTProto(id int32, hash string, opts ...Option) (*MTProto, error) {
 }
 
 func (m *MTProto) Connect() (err error) {
-	m.network.Connect()
+	err = m.network.Connect()
+	if err != nil {
+		return
+	}
 
 	// start goroutines
 	go m.sendRoutine()
