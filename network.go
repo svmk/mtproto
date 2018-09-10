@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"os"
 	"sync"
 	"time"
 )
@@ -25,6 +24,7 @@ type INetwork interface {
 
 type Network struct {
 	session ISession
+	sessionStorage SessionStorage
 
 	useIPv6 bool
 	address string
@@ -42,9 +42,10 @@ type Network struct {
 	msgId     int64
 }
 
-func NewNetwork(dialer Dialer, newSession bool, authkeyfile string, queueSend chan packetToSend, address string, useIPv6 bool) (INetwork, error) {
+func NewNetwork(dialer Dialer, newSession bool, sessionStorage SessionStorage, queueSend chan packetToSend, address string, useIPv6 bool) (INetwork, error) {
 	nw := new(Network)
 
+	nw.sessionStorage = sessionStorage
 	nw.queueSend = queueSend
 	nw.msgsIdToAck = make(map[int64]packetToSend)
 	nw.msgsIdToResp = make(map[int64]chan response)
@@ -56,9 +57,13 @@ func NewNetwork(dialer Dialer, newSession bool, authkeyfile string, queueSend ch
 
 	var err error
 	if newSession {
-		err = nw.CreateSession(authkeyfile)
+		nw.CreateSession()
 	} else {
-		err = nw.LoadSession(authkeyfile)
+		if nw.sessionStorage.IsExists(nw.session) {
+			err = nw.LoadSession()
+		} else {
+			nw.CreateSession()
+		}
 	}
 
 	if err != nil {
@@ -68,31 +73,17 @@ func NewNetwork(dialer Dialer, newSession bool, authkeyfile string, queueSend ch
 	return nw, nil
 }
 
-// Accepts path to file where to store session key
-func (nw *Network) CreateSession(session string) error {
-	file, err := os.OpenFile(session, os.O_RDWR|os.O_CREATE, 0600)
-	if err != nil {
-		return err
-	}
-
-	nw.session = NewSession(file)
+func (nw *Network) CreateSession() {
+	nw.session = NewSession()
 	nw.session.SetAddress(nw.address)
 	nw.session.UseIPv6(nw.useIPv6)
 	nw.session.Encrypted(false)
-
-	return nil
 }
 
-// Accepts path to file where to store session key
-func (nw *Network) LoadSession(session string) error {
-	file, err := os.OpenFile(session, os.O_RDWR|os.O_CREATE, 0600)
-	if err != nil {
+func (nw *Network) LoadSession() error {
+	nw.session = NewSession()
+	if err := nw.sessionStorage.Load(nw.session); err != nil {
 		return err
-	}
-
-	nw.session = NewSession(file)
-	if err = nw.session.Load(); err != nil {
-		return nw.CreateSession(session)
 	}
 
 	nw.session.Encrypted(true)
@@ -466,7 +457,7 @@ func (nw *Network) makeAuthKey() error {
 	}
 
 	// (all ok)
-	err = nw.session.Save()
+	err = nw.sessionStorage.Save(nw.session)
 	if err != nil {
 		return err
 	}
@@ -490,7 +481,7 @@ func (nw *Network) process(msgId int64, seqNo int32, data interface{}) interface
 	case TL_bad_server_salt:
 		data := data.(TL_bad_server_salt)
 		nw.session.SetServerSalt(data.New_server_salt)
-		_ = nw.session.Save()
+		_ = nw.sessionStorage.Save(nw.session)
 		nw.mutex.Lock()
 		defer nw.mutex.Unlock()
 		for k, v := range nw.msgsIdToAck {
@@ -501,7 +492,7 @@ func (nw *Network) process(msgId int64, seqNo int32, data interface{}) interface
 	case TL_new_session_created:
 		data := data.(TL_new_session_created)
 		nw.session.SetServerSalt(data.Server_salt)
-		_ = nw.session.Save()
+		_ = nw.sessionStorage.Save(nw.session)
 
 	case TL_ping:
 		data := data.(TL_ping)

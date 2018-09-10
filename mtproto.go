@@ -18,7 +18,7 @@ type MTProto struct {
 	network INetwork
 
 	IPv6        bool
-	authkeyfile string
+	sessionStorage SessionStorage
 	id          int32
 	hash        string
 	version     string
@@ -48,7 +48,7 @@ type options struct {
 	SystemVersion string
 	Language      string
 	IPv6          bool
-	AuthkeyFile   string
+	SessionStorage SessionStorage
 	ServerAddress string
 	NewSession    bool
 	Dialer        Dialer
@@ -87,8 +87,14 @@ func WithServer(server string, ipv6 bool) Option {
 
 func WithAuthFile(authfile string, newSession bool) Option {
 	return func(opts *options) {
-		opts.AuthkeyFile = authfile
+		opts.SessionStorage = NewFileSessionStorage(authfile)
 		opts.NewSession = newSession
+	}
+}
+
+func WithSessionStorage(sessionStorage SessionStorage) Option {
+	return func(i *options) {
+		i.SessionStorage = sessionStorage
 	}
 }
 
@@ -103,7 +109,7 @@ var defaultOptions = options{
 	SystemVersion: runtime.GOOS + "/" + runtime.GOARCH,
 	Language:      "en",
 	IPv6:          false,
-	AuthkeyFile:   os.Getenv("HOME") + "/mtproto.auth",
+	SessionStorage: NewFileSessionStorage(os.Getenv("HOME") + "/mtproto.auth"),
 	ServerAddress: "149.154.167.50:443",
 	Version:       "0.0.1",
 	NewSession:    false,
@@ -152,11 +158,11 @@ func NewMTProto(id int32, hash string, opts ...Option) (*MTProto, error) {
 	m.device = configuration.DeviceModel
 	m.system = configuration.SystemVersion
 	m.language = configuration.Language
-	m.authkeyfile = configuration.AuthkeyFile
+	m.sessionStorage = configuration.SessionStorage
 	m.IPv6 = configuration.IPv6
 	m.configuration = configuration
 
-	if m.network, err = NewNetwork(configuration.Dialer, configuration.NewSession, m.authkeyfile, m.queueSend, configuration.ServerAddress, m.IPv6); err != nil {
+	if m.network, err = NewNetwork(configuration.Dialer, configuration.NewSession, m.sessionStorage, m.queueSend, configuration.ServerAddress, m.IPv6); err != nil {
 		return nil, err
 	}
 
@@ -232,7 +238,7 @@ func (m *MTProto) reconnect(newaddr string) error {
 
 	// renew connection
 	if newaddr != m.network.Address() {
-		m.network, err = NewNetwork(m.configuration.Dialer, true, m.authkeyfile, m.queueSend, newaddr, m.IPv6)
+		m.network, err = NewNetwork(m.configuration.Dialer, true, m.sessionStorage, m.queueSend, newaddr, m.IPv6)
 	}
 
 	err = m.Connect()
