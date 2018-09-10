@@ -1,7 +1,9 @@
 package mtproto
 
 import (
+	"errors"
 	"fmt"
+	"github.com/tevino/abool"
 	"io"
 	"log"
 	"os"
@@ -12,6 +14,7 @@ import (
 
 type MTProto struct {
 	queueSend    chan packetToSend
+	isConnected  *abool.AtomicBool
 	stopRoutines chan struct{}
 	allDone      sync.WaitGroup
 
@@ -149,6 +152,7 @@ func NewMTProto(id int32, hash string, opts ...Option) (*MTProto, error) {
 	m := new(MTProto)
 
 	m.queueSend = make(chan packetToSend, 64)
+	m.isConnected = abool.NewBool(true)
 	m.stopRoutines = make(chan struct{})
 	m.allDone = sync.WaitGroup{}
 
@@ -265,11 +269,12 @@ func (m *MTProto) sendRoutine() {
 	for {
 		select {
 		case <-m.stopRoutines:
+			m.isConnected.SetTo(false)
 			return
 		case x := <-m.queueSend:
 			err := m.network.Send(x.msg, x.resp)
 			if err != nil {
-				log.Fatalln("SendRoutine:", err)
+				x.resp <- response{err: err}
 			}
 		}
 	}
@@ -348,6 +353,12 @@ func (m *MTProto) InvokeSync(msg TL) (*TL, error) {
 
 func (m *MTProto) InvokeAsync(msg TL) chan response {
 	resp := make(chan response, 1)
+	if !m.isConnected.IsSet() {
+		go func() {
+			resp <- response{err: errors.New("Disconnected ")}
+		}()
+		return resp
+	}
 	m.queueSend <- packetToSend{
 		msg:  msg,
 		resp: resp,
